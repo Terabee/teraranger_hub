@@ -17,10 +17,15 @@ TerarangerHubOne::TerarangerHubOne()
                              std::string("/dev/ttyACM0"));
   ns_ = ros::this_node::getNamespace();
   ns_ = ros::names::clean(ns_);
-  if (ns_ != "" && ns_[0] == '/'){ // Remove first backslash if needed
+  if (ns_ != "" && ns_[0] == '/')
+  { // Remove first backslash if needed
     ns_.erase(0,1);
   }
   ROS_INFO("node namespace: [%s]", ns_.c_str());
+
+  private_node_handle_.param("nan_timeout_ms", nan_timeout_, 2000);
+  std::vector<bool> default_mask = {false, false, false, false, false, false, false, false};
+  private_node_handle_.param<std::vector<bool>>("required_sensors_mask", required_sensors_mask_, default_mask);
 
   // Publishers
   range_publisher_ = nh_.advertise<teraranger_array::RangeArray>("ranges", 8);
@@ -56,7 +61,7 @@ TerarangerHubOne::TerarangerHubOne()
   field_of_view = 0.0593;
   max_range = 14.0;
   min_range = 0.2;
-  number_of_sensors = 8;
+  number_of_sensors = NB_SENSORS;
   frame_id = "base_range_";
 
   // Initialize data structure
@@ -85,6 +90,9 @@ TerarangerHubOne::TerarangerHubOne()
     measure.header.frame_id = "base_" + ns_;// Remove first slash
   }
 
+  // Initialize timeout timers
+  sensor_timers = new AsyncTimerArray(NB_SENSORS, nan_timeout_, 25);
+
   // Dynamic reconfigure
   dyn_param_server_callback_function_ =
       boost::bind(&TerarangerHubOne::dynParamCallback, this, _1, _2);
@@ -92,6 +100,38 @@ TerarangerHubOne::TerarangerHubOne()
 }
 
 TerarangerHubOne::~TerarangerHubOne() {}
+
+void TerarangerHubOne::validate_sensor(int sensor_id)
+{
+  if(required_sensors_mask_[sensor_id])
+  {
+    if(this->sensor_timers->is_expired(sensor_id))
+    {
+      this->sensor_timers->reset_expired(sensor_id);
+    }
+    if(this->sensor_timers->is_running(sensor_id))
+    {
+      this->sensor_timers->cancel(sensor_id);
+    }
+  }
+}
+
+void TerarangerHubOne::invalidate_sensor(int sensor_id)
+{
+  if(required_sensors_mask_[sensor_id] && !(this->sensor_timers->is_running(sensor_id)))
+  {
+    this->sensor_timers->start(sensor_id);
+  }
+}
+
+void TerarangerHubOne::check_timers()
+{
+  if(this->sensor_timers->any_timer_expired())
+  {
+    ROS_ERROR("Some required sensors have been reporting invalid measurements for more than %d milliseconds. Shutting down driver...", nan_timeout_);
+    ros::shutdown();
+  }
+}
 
 void TerarangerHubOne::serialDataCallback(uint8_t single_character)
 {
@@ -134,14 +174,17 @@ void TerarangerHubOne::serialDataCallback(uint8_t single_character)
           if(current_range == TOO_CLOSE_VALUE)// Too close, 255 is for short range
           {
             final_range = -std::numeric_limits<float>::infinity();
+            validate_sensor(i);
           }
           else if(current_range == OUT_OF_RANGE_VALUE)// Out of range
           {
             final_range = std::numeric_limits<float>::infinity();
+            validate_sensor(i);
           }
           else if(current_range == INVALID_MEASURE_VALUE)// Not connected
           {
             final_range = std::numeric_limits<float>::quiet_NaN();
+            invalidate_sensor(i);
           }
           // Enforcing min and max range
           else if(float_range > max_range)
@@ -155,12 +198,14 @@ void TerarangerHubOne::serialDataCallback(uint8_t single_character)
           else// Convert to meters
           {
             final_range = float_range;
+            validate_sensor(i);
           }
           measure.ranges.at(i).range = final_range;
         }
         measure.header.seq = (int) seq_ctr / 8;
         measure.header.stamp = ros::Time::now();
         range_publisher_.publish(measure);
+        check_timers();
       }
       else
       {
@@ -234,7 +279,8 @@ void TerarangerHubOne::spin()
     ros::spinOnce();
   }
 }
-}
+
+}// End of namespace teraranger_array
 
 int main(int argc, char **argv)
 {

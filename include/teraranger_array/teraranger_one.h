@@ -8,6 +8,7 @@
 #include <teraranger_array/TerarangerHubOneConfig.h>
 #include <teraranger_array/RangeArray.h>
 #include <serial/serial.h>
+#include <multiple_asynchronous_timers/AsyncTimerArray.h>
 
 #define BUFFER_SIZE 19
 #define SERIAL_SPEED 115200
@@ -18,6 +19,8 @@
 #define TOO_CLOSE_VALUE 200
 #define INVALID_MEASURE_VALUE -1
 #define VALUE_TO_METER_FACTOR 0.001
+
+#define NB_SENSORS 8
 
 namespace teraranger_array
 {
@@ -65,6 +68,13 @@ private:
   std::string frame_id;
 
   teraranger_array::RangeArray measure;
+
+  AsyncTimerArray* sensor_timers = nullptr;
+  std::vector<bool> required_sensors_mask_;
+  int nan_timeout_;
+  void validate_sensor(int sensor_id);
+  void invalidate_sensor(int sensor_id);
+  void check_timers();
 };
 
 } // namespace teraranger_array
