@@ -45,6 +45,7 @@ TerarangerHubMultiflex::TerarangerHubMultiflex()
   { // Remove first backslash if needed
     ns_.erase(0,1);
   }
+  std::replace(ns_.begin(), ns_.end(), '/', '_');
   ROS_INFO("node namespace: [%s]", ns_.c_str());
 
   std::string frame_id = "base_range_";
@@ -77,7 +78,7 @@ TerarangerHubMultiflex::TerarangerHubMultiflex()
   }
   else
   {
-    range_array_msg.header.frame_id = "base_" + ns_;
+    range_array_msg.header.frame_id = ns_ + "_base";
   }
 
   // Set operation Mode
